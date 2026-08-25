@@ -1,314 +1,155 @@
-"""
-EmotionAI Web — Backend Flask
-Raspberry Pi 4 + RB Cam + Google Coral USB Accelerator
-"""
-
+from flask import Flask, render_template, Response, jsonify
 import cv2
 import numpy as np
 import time
 import threading
-import logging
-from flask import Flask, jsonify
-from flask_cors import CORS
+import tflite_runtime.interpreter as tflite
+from picamera2 import Picamera2
 
-from database import init_db, save_detection
-
-# ── Intentar cargar PyCoral / TFLite (si no está disponible, usar modo simulado) ──
-try:
-    from pycoral.utils.edgetpu import make_interpreter
-    from pycoral.adapters.common import input_size, set_input
-    from pycoral.adapters.classify import get_classes
-    CORAL_AVAILABLE = True
-except ImportError:
-    CORAL_AVAILABLE = False
-    logging.warning("PyCoral no disponible. Usando TFLite sin Edge TPU.")
-
-try:
-    import tflite_runtime.interpreter as tflite
-    TFLITE_AVAILABLE = True
-except ImportError:
-    try:
-        import tensorflow.lite as tflite
-        TFLITE_AVAILABLE = True
-    except ImportError:
-        TFLITE_AVAILABLE = False
-        logging.warning("TFLite no disponible. El servidor arrancará en modo demo.")
-
-# ── Configuración ─────────────────────────────────────────────────────────────
-MODEL_PATH      = "models/emociones_edgetpu.tflite"   # modelo Edge TPU
-MODEL_PATH_CPU  = "models/emociones.tflite"           # fallback sin TPU
-CASCADE_PATH    = cv2.data.haarcascades + "haarcascade_frontalface_default.xml"
-CAMERA_INDEX    = 0        # índice de la RB Cam
-INPUT_SIZE      = (48, 48) # resolución que espera el modelo
-CONFIDENCE_MIN  = 0.30     # descartar detecciones por debajo de este umbral
-FRAME_SKIP      = 2        # procesar 1 de cada N frames (reduce carga CPU)
-
-EMOTION_LABELS = ["enojado", "sorprendido", "neutral", "feliz", "triste"]
-# Orden según las clases reales del modelo .tflite
-
-# ── Estado global compartido ──────────────────────────────────────────────────
-state = {
-    "emotion":    None,
-    "confidence": 0.0,
-    "fps":        0,
-    "tpu":        "Desconectado",
-    "face_count": 0,
-}
-state_lock = threading.Lock()
-
-# ── Flask ─────────────────────────────────────────────────────────────────────
 app = Flask(__name__)
-CORS(app)  # permite que el HTML externo haga fetch sin CORS error
 
-logging.basicConfig(level=logging.INFO,
-                    format="%(asctime)s [%(levelname)s] %(message)s")
+# ---------------------------------------------------------
+# 1. Variables Globales y Configuración
+# ---------------------------------------------------------
+MODEL_TPU_PATH = "models/emociones_edgetpu.tflite"
+MODEL_CPU_PATH = "models/emociones.tflite"
+LIBEDGETPU_PATH = "/usr/lib/aarch64-linux-gnu/libedgetpu.so.1.0"
+CLASSES = ['Enojo', 'Disgusto', 'Miedo', 'Feliz', 'Triste', 'Sorpresa', 'Neutral']
 
+latest_emotion = "Cargando..."
+current_frame = None
+lock = threading.Lock()
 
-# ── Carga del modelo ──────────────────────────────────────────────────────────
-def load_model():
-    """Intenta cargar el modelo en este orden: Coral TPU → TFLite CPU → modo demo."""
-    if CORAL_AVAILABLE:
+# ---------------------------------------------------------
+# 2. Carga del Modelo TFLite
+# ---------------------------------------------------------
+def create_interpreter(use_tpu=True):
+    if use_tpu:
         try:
-            interp = make_interpreter(MODEL_PATH)
+            interp = tflite.Interpreter(
+                model_path=MODEL_TPU_PATH,
+                experimental_delegates=[
+                    tflite.load_delegate(LIBEDGETPU_PATH, {'device': 'usb:0'})
+                ]
+            )
             interp.allocate_tensors()
-            logging.info("✅ Modelo cargado en Coral Edge TPU")
-            return interp, "tpu"
+            print(">>> Modelo cargado exitosamente en TPU Coral.")
+            return interp, True
         except Exception as e:
-            logging.warning(f"Coral TPU falló: {e}. Probando TFLite CPU...")
+            print(f">>> Error al cargar TPU Coral: {e}. Pasando a CPU...")
+    
+    interp = tflite.Interpreter(model_path=MODEL_CPU_PATH)
+    interp.allocate_tensors()
+    print(">>> Modelo cargado en CPU.")
+    return interp, False
 
-    if TFLITE_AVAILABLE:
-        cpu_path = MODEL_PATH_CPU if __import__("os").path.exists(MODEL_PATH_CPU) else MODEL_PATH.replace("_edgetpu", "")
-        try:
-            interp = tflite.Interpreter(model_path=cpu_path)
-            interp.allocate_tensors()
-            logging.info(f"✅ Modelo cargado en CPU ({cpu_path})")
-            return interp, "cpu"
-        except Exception as e:
-            logging.warning(f"TFLite CPU falló: {e}. Usando modo demo.")
+interpreter, is_tpu = create_interpreter(use_tpu=True)
 
-    logging.warning("⚠️  Sin modelo disponible — arrancando en modo DEMO.")
-    return None, "demo"
-
-
-# ── Preprocesado de imagen ────────────────────────────────────────────────────
-def preprocess_face(face_img):
-    """Convierte el ROI del rostro al tensor que espera el modelo."""
-    img = cv2.resize(face_img, INPUT_SIZE)
-    img = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)   # el modelo FER trabaja en escala de grises
-    img = img.astype(np.float32) / 255.0
-    img = np.expand_dims(img, axis=(0, -1))        # (1, 48, 48, 1)
-    return img
-
-
-# ── Inferencia ────────────────────────────────────────────────────────────────
-def run_inference(interpreter, face_tensor, mode):
-    """Ejecuta la inferencia y devuelve (label, confidence)."""
-    input_details  = interpreter.get_input_details()
-    output_details = interpreter.get_output_details()
-
-    # Algunos modelos Edge TPU esperan uint8
-    if input_details[0]["dtype"] == np.uint8:
-        scale, zero_point = input_details[0]["quantization"]
-        face_tensor = (face_tensor / scale + zero_point).astype(np.uint8)
-
-    interpreter.set_tensor(input_details[0]["index"], face_tensor)
-    interpreter.invoke()
-
-    output = interpreter.get_tensor(output_details[0]["index"])[0]
-    # output shape: (num_classes,) con probabilidades o logits
-    if output.dtype == np.uint8:
-        # dequantizar si es necesario
-        scale, zero_point = output_details[0]["quantization"]
-        output = (output.astype(np.float32) - zero_point) * scale
-
-    # softmax si el modelo devuelve logits (sin activación final)
-    def softmax(x):
-        e = np.exp(x - np.max(x))
-        return e / e.sum()
-
-    probs = softmax(output) if output.max() > 1 else output
-    idx   = int(np.argmax(probs))
-    label = EMOTION_LABELS[idx] if idx < len(EMOTION_LABELS) else "neutral"
-    conf  = float(probs[idx])
-    return label, conf
-
-
-# ── Demo mode (sin modelo real) ───────────────────────────────────────────────
-_demo_emotions = ["feliz", "neutral", "triste", "sorprendido", "enojado"]
-_demo_idx      = 0
-_demo_last     = 0
-
-def demo_inference():
-    """Rota emociones ficticias cada 3 segundos para demostración sin hardware."""
-    global _demo_idx, _demo_last
-    now = time.time()
-    if now - _demo_last > 3:
-        _demo_idx  = (_demo_idx + 1) % len(_demo_emotions)
-        _demo_last = now
-    label = _demo_emotions[_demo_idx]
-    conf  = round(0.75 + 0.24 * abs(np.sin(now)), 4)
-    return label, conf
-
-
-# ── Hilo principal de captura ─────────────────────────────────────────────────
-def capture_loop():
-    global state
-
-    interpreter, mode = load_model()
-    tpu_label = "Conectado" if mode == "tpu" else ("CPU" if mode == "cpu" else "Demo")
-
-    face_cascade = cv2.CascadeClassifier(CASCADE_PATH)
-    cap          = None
-
-    if mode != "demo":
-        cap = cv2.VideoCapture(CAMERA_INDEX)
-        cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
-        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
-
-        if not cap.isOpened():
-            logging.error("No se pudo abrir la cámara. Cambiando a modo demo.")
-            mode      = "demo"
-            tpu_label = "Demo"
-            cap       = None
-
-    frame_count = 0
-    fps_timer   = time.time()
-    fps_val     = 0
-
-    logging.info(f"🎥 Captura iniciada — modo: {mode}")
+# ---------------------------------------------------------
+# 3. Bucle de la Cámara con Picamera2
+# ---------------------------------------------------------
+def camera_loop():
+    global latest_emotion, current_frame, interpreter, is_tpu
+    
+    # Inicializar el detector facial
+    #face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
+    face_cascade = cv2.CascadeClassifier('/usr/share/opencv4/haarcascades/haarcascade_frontalface_default.xml')
+    # Inicializar la cámara usando la API de Bookworm
+    picam2 = Picamera2()
+    config = picam2.create_preview_configuration(main={"size": (640, 480), "format": "RGB888"})
+    picam2.configure(config)
+    picam2.start()
 
     while True:
-        try:
-            # ── FPS ──
-            frame_count += 1
-            now = time.time()
-            if now - fps_timer >= 1.0:
-                fps_val    = frame_count
-                frame_count = 0
-                fps_timer  = now
+        # Capturar el fotograma como un array BGR compatible con OpenCV
+        frame = picam2.capture_array()
+        frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
 
-            # ── Demo sin cámara ──
-            if mode == "demo" or cap is None:
-                label, conf = demo_inference()
-                with state_lock:
-                    state.update({
-                        "emotion":    label,
-                        "confidence": conf,
-                        "fps":        fps_val or 24,
-                        "tpu":        tpu_label,
-                        "face_count": 1,
-                    })
-                time.sleep(0.1)
-                continue
+        input_details = interpreter.get_input_details()
+        output_details = interpreter.get_output_details()
+        input_shape = input_details[0]['shape']
+        height, width, channels = input_shape[1], input_shape[2], input_shape[3]
 
-            # ── Captura real ──
-            ret, frame = cap.read()
-            if not ret:
-                time.sleep(0.05)
-                continue
+        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        faces = face_cascade.detectMultiScale(gray, scaleFactor=1.3, minNeighbors=5)
 
-            # Saltar frames para no saturar la CPU
-            if frame_count % FRAME_SKIP != 0:
-                continue
-
-            gray  = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-            faces = face_cascade.detectMultiScale(
-                gray,
-                scaleFactor=1.1,
-                minNeighbors=5,
-                minSize=(60, 60),
-            )
-
-            if len(faces) == 0:
-                with state_lock:
-                    state.update({
-                        "emotion":    None,
-                        "confidence": 0.0,
-                        "fps":        fps_val,
-                        "tpu":        tpu_label,
-                        "face_count": 0,
-                    })
-                continue
-
-            # Tomar el rostro más grande
-            x, y, w, h = max(faces, key=lambda f: f[2] * f[3])
+        for (x, y, w, h) in faces:
             roi = frame[y:y+h, x:x+w]
-
-            # Inferencia
-            if interpreter is not None:
-                tensor         = preprocess_face(roi)
-                label, conf    = run_inference(interpreter, tensor, mode)
+            
+            if channels == 1:
+                roi_prep = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
             else:
-                label, conf = demo_inference()
+                roi_prep = cv2.cvtColor(roi, cv2.COLOR_BGR2RGB)
+                
+            roi_prep = cv2.resize(roi_prep, (width, height))
+            input_data = np.expand_dims(roi_prep, axis=0)
 
-            # Descartar baja confianza
-            if conf < CONFIDENCE_MIN:
-                label = None
+            if input_details[0]['dtype'] == np.uint8:
+                input_data = input_data.astype(np.uint8)
+            elif input_details[0]['dtype'] == np.int8:
+                input_data = (input_data - 128).astype(np.int8)
+            else:
+                input_data = (input_data / 255.0).astype(np.float32)
 
-            with state_lock:
-                state.update({
-                    "emotion":    label,
-                    "confidence": round(conf, 4),
-                    "fps":        fps_val,
-                    "tpu":        tpu_label,
-                    "face_count": len(faces),
-                })
+            try:
+                start_time = time.time()
+                interpreter.set_tensor(input_details[0]['index'], input_data)
+                interpreter.invoke()
+                output_data = interpreter.get_tensor(output_details[0]['index'])
+                inference_time = (time.time() - start_time) * 1000
 
-            if label:
-                save_detection(label, conf)
+                prediction_idx = np.argmax(output_data[0])
+                latest_emotion = CLASSES[prediction_idx]
 
-        except Exception as e:
-            logging.error(f"Error en capture_loop: {e}")
-            time.sleep(0.5)
+                mode_label = "TPU" if is_tpu else "CPU"
+                cv2.rectangle(frame, (x, y), (x+w, y+h), (0, 255, 0), 2)
+                cv2.putText(frame, f"{latest_emotion} [{mode_label}] ({inference_time:.1f}ms)", 
+                            (x, y - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
 
+            except Exception as e:
+                if is_tpu:
+                    print(f"\n[ALERTA] Fallo TPU ({e}). Conmutando a CPU...")
+                    interpreter, is_tpu = create_interpreter(use_tpu=False)
 
-# ── Endpoints Flask ───────────────────────────────────────────────────────────
-@app.route("/emotion")
-def emotion():
-    """
-    Endpoint principal que consume el frontend existente.
-    Devuelve exactamente el JSON que espera emotionai_web.html:
-      { emotion, confidence, fps, tpu }
-    """
-    with state_lock:
-        snap = dict(state)
+        # Codificar fotograma para la transmisión HTTP
+        ret, buffer = cv2.imencode('.jpg', frame, [int(cv2.IMWRITE_JPEG_QUALITY), 80])
+        if ret:
+            with lock:
+                current_frame = buffer.tobytes()
 
-    return jsonify({
-        "emotion":    snap["emotion"] or "",   # "" → frontend limpia la UI
-        "confidence": snap["confidence"],
-        "fps":        snap["fps"],
-        "tpu":        snap["tpu"],
-        "face_count": snap["face_count"],
-    })
+        time.sleep(0.03)
 
+# Iniciar el hilo de la cámara
+threading.Thread(target=camera_loop, daemon=True).start()
 
-@app.route("/history")
-def history():
-    """Devuelve las últimas 50 detecciones del historial SQLite."""
-    from database import get_history
-    rows = get_history(limit=50)
-    return jsonify(rows)
+# ---------------------------------------------------------
+# 4. Servidor Flask
+# ---------------------------------------------------------
+def generate_frames():
+    global current_frame
+    while True:
+        with lock:
+            if current_frame is not None:
+                frame_bytes = current_frame
+            else:
+                time.sleep(0.01)
+                continue
 
+        yield (b'--frame\r\n'
+               b'Content-Type: image/jpeg\r\n\r\n' + frame_bytes + b'\r\n')
+        time.sleep(0.03)
 
-@app.route("/stats")
-def stats():
-    """Resumen de emociones detectadas (para futuro dashboard)."""
-    from database import get_stats
-    return jsonify(get_stats())
+@app.route('/')
+def index():
+    return render_template('emotionai_web.html')
 
+@app.route('/video_feed')
+def video_feed():
+    return Response(generate_frames(), mimetype='multipart/x-mixed-replace; boundary=frame')
 
-@app.route("/health")
-def health():
-    return jsonify({"status": "ok"})
+@app.route('/emotion')
+def get_emotion():
+    return jsonify({'emotion': latest_emotion})
 
-
-# ── Arranque ──────────────────────────────────────────────────────────────────
-if __name__ == "__main__":
-    init_db()
-
-    # Hilo de captura en background
-    t = threading.Thread(target=capture_loop, daemon=True)
-    t.start()
-
-    logging.info("🚀 EmotionAI Flask corriendo en http://0.0.0.0:5000")
-    app.run(host="0.0.0.0", port=5000, debug=False, threaded=True)
+if __name__ == '__main__':
+    app.run(host='0.0.0.0', port=5000, debug=False)

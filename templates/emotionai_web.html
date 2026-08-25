@@ -1,0 +1,1552 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>EmotionAI — ¡Detector de Emociones!</title>
+  <link href="https://fonts.googleapis.com/css2?family=Nunito:wght@400;700;800;900&family=Baloo+2:wght@400;700;800&display=swap" rel="stylesheet"/>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg:        #FFF0F8;
+      --surface:   #FFFFFF;
+      --border:    #F9C0DD;
+      --text:      #5A3060;
+      --text-dim:  #B088C0;
+      --accent:    #E040A0;
+
+      --c-feliz:      #FFB800;
+      --c-triste:     #5B9CF6;
+      --c-enojo:      #FF5757;
+      --c-sorpresa:   #FF8C42;
+      --c-neutral:    #4DD9AC;
+      --c-idle:       #F9C0DD;
+
+      --active-glow:  var(--c-idle);
+      --active-color: var(--c-idle);
+
+      font-family: 'Nunito', sans-serif;
+    }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 2rem 1rem 3rem;
+      overflow-x: hidden;
+      position: relative;
+    }
+
+    body::before {
+      content: '';
+      position: fixed; inset: 0;
+      background-image:
+        radial-gradient(circle at 10% 20%, #FFD6EC 0%, transparent 40%),
+        radial-gradient(circle at 90% 80%, #D6EEFF 0%, transparent 40%),
+        radial-gradient(circle at 50% 50%, #FFF5D6 0%, transparent 60%);
+      pointer-events: none;
+      z-index: 0;
+    }
+
+    header {
+      width: 100%;
+      max-width: 760px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 1.2rem;
+      position: relative; z-index: 1;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+    .logo {
+      font-family: 'Baloo 2', cursive;
+      font-size: 22px;
+      font-weight: 800;
+      color: var(--text);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .logo span { color: var(--accent); }
+    .logo .logo-emoji { font-size: 26px; animation: bounce-logo 1.8s ease infinite; }
+    @keyframes bounce-logo {
+      0%,100% { transform: translateY(0); }
+      50%      { transform: translateY(-6px); }
+    }
+    .header-right { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+    .tpu-badge {
+      font-family: 'Nunito', sans-serif;
+      font-size: 13px;
+      font-weight: 700;
+      padding: 7px 14px;
+      border-radius: 50px;
+      border: 2.5px solid var(--border);
+      color: var(--text-dim);
+      background: white;
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      transition: all 0.4s;
+      box-shadow: 0 3px 10px rgba(0,0,0,0.06);
+    }
+    .tpu-badge.connected { border-color: #4DD9AC; color: #2AAA80; background: #EDFFF8; }
+    .tpu-dot {
+      width: 9px; height: 9px;
+      border-radius: 50%;
+      background: var(--border);
+      transition: background 0.4s;
+    }
+    .tpu-badge.connected .tpu-dot {
+      background: #4DD9AC;
+      box-shadow: 0 0 8px #4DD9AC;
+      animation: blink 1.5s ease infinite;
+    }
+    @keyframes blink {
+      0%,100% { opacity: 1; } 50% { opacity: 0.3; }
+    }
+
+    .sound-btn {
+      width: 42px; height: 42px;
+      border-radius: 50%;
+      border: 2.5px solid var(--border);
+      background: white;
+      font-size: 18px;
+      cursor: pointer;
+      display: flex; align-items: center; justify-content: center;
+      box-shadow: 0 3px 10px rgba(0,0,0,0.06);
+      transition: transform 0.2s, border-color 0.3s;
+    }
+    .sound-btn:hover { transform: scale(1.1) rotate(-6deg); }
+    .sound-btn:active { transform: scale(0.9); }
+    .sound-btn.muted { border-color: #FF9BC4; opacity: 0.55; }
+
+    /* ── PLAY BUTTON ─────────────────────────────── */
+    .play-btn {
+      font-family: 'Baloo 2', cursive;
+      font-size: 14px;
+      font-weight: 800;
+      padding: 9px 18px;
+      border-radius: 50px;
+      border: none;
+      color: white;
+      background: linear-gradient(135deg, #FF6FB0, var(--accent));
+      cursor: pointer;
+      box-shadow: 0 4px 14px rgba(224,64,160,0.35);
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      transition: transform 0.2s;
+      animation: play-pulse 2.4s ease-in-out infinite;
+    }
+    .play-btn:hover { transform: scale(1.05); }
+    .play-btn:active { transform: scale(0.94); }
+    @keyframes play-pulse {
+      0%,100% { box-shadow: 0 4px 14px rgba(224,64,160,0.35); }
+      50%      { box-shadow: 0 4px 22px rgba(224,64,160,0.6); }
+    }
+
+    .mascot-wrap {
+      width: 100%;
+      max-width: 760px;
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      margin-bottom: 1.2rem;
+      position: relative; z-index: 1;
+    }
+    .mascot {
+      width: 64px; height: 64px;
+      flex-shrink: 0;
+      cursor: pointer;
+      transition: transform 0.15s;
+      animation: mascot-idle 2.4s ease-in-out infinite;
+    }
+    .mascot:hover { transform: scale(1.12) rotate(-4deg); }
+    .mascot:active { transform: scale(0.9); }
+    @keyframes mascot-idle {
+      0%,100% { transform: translateY(0) rotate(-2deg); }
+      50%      { transform: translateY(-8px) rotate(2deg); }
+    }
+    .mascot.excited { animation: mascot-excited 0.5s ease infinite; }
+    @keyframes mascot-excited {
+      0%,100% { transform: translateY(0) rotate(-8deg) scale(1); }
+      50%      { transform: translateY(-10px) rotate(8deg) scale(1.08); }
+    }
+    .speech-bubble {
+      position: relative;
+      background: white;
+      border: 3px solid var(--border);
+      border-radius: 20px;
+      padding: 12px 18px;
+      font-family: 'Baloo 2', cursive;
+      font-weight: 700;
+      font-size: 15px;
+      color: var(--text);
+      max-width: 460px;
+      box-shadow: 0 4px 14px rgba(200,100,160,0.12);
+      transition: border-color 0.4s;
+    }
+    .speech-bubble::before {
+      content: '';
+      position: absolute;
+      left: -12px; top: 22px;
+      width: 0; height: 0;
+      border-top: 9px solid transparent;
+      border-bottom: 9px solid transparent;
+      border-right: 12px solid var(--border);
+      transition: border-color 0.4s;
+    }
+    .speech-bubble::after {
+      content: '';
+      position: absolute;
+      left: -9px; top: 24px;
+      width: 0; height: 0;
+      border-top: 7px solid transparent;
+      border-bottom: 7px solid transparent;
+      border-right: 10px solid white;
+    }
+
+    .main-panel {
+      width: 100%;
+      max-width: 760px;
+      position: relative; z-index: 1;
+      margin-bottom: 1.8rem;
+    }
+
+    .emotion-hero {
+      background: white;
+      border: 3px solid var(--border);
+      border-radius: 32px;
+      padding: 2.2rem 2rem 2rem;
+      display: flex;
+      align-items: center;
+      gap: 2rem;
+      position: relative;
+      overflow: hidden;
+      transition: border-color 0.5s, box-shadow 0.5s;
+      box-shadow: 0 6px 24px rgba(200,100,160,0.10), 0 2px 0 var(--border);
+    }
+    .emotion-hero.active {
+      border-color: var(--active-color);
+      box-shadow: 0 8px 36px -6px var(--active-glow), 0 2px 0 var(--active-color);
+    }
+
+    .emotion-hero::before {
+      content: '';
+      position: absolute;
+      top: -40%; left: -20%;
+      width: 60%; height: 200%;
+      background: radial-gradient(ellipse, var(--active-glow) 0%, transparent 70%);
+      opacity: 0;
+      transition: opacity 0.6s;
+      pointer-events: none;
+    }
+    .emotion-hero.active::before { opacity: 0.12; }
+
+    .hero-face {
+      flex-shrink: 0;
+      width: 110px; height: 110px;
+      transition: transform 0.25s;
+    }
+    .hero-face.pop { animation: hero-pop 0.5s ease; }
+    @keyframes hero-pop {
+      0%   { transform: scale(0.6) rotate(-10deg); }
+      55%  { transform: scale(1.15) rotate(6deg); }
+      100% { transform: scale(1) rotate(0deg); }
+    }
+    .hero-face svg { width: 100%; height: 100%; }
+
+    .hero-info { flex: 1; }
+    .hero-label {
+      font-family: 'Nunito', sans-serif;
+      font-size: 13px;
+      font-weight: 700;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      color: var(--text-dim);
+      margin-bottom: 0.3rem;
+    }
+    .hero-emotion {
+      font-family: 'Baloo 2', cursive;
+      font-size: clamp(2.2rem, 6vw, 3.4rem);
+      font-weight: 800;
+      letter-spacing: -0.01em;
+      color: var(--text);
+      text-transform: capitalize;
+      line-height: 1;
+      transition: color 0.4s;
+    }
+    .hero-emotion.colored { color: var(--active-color); }
+
+    .confidence-bar-wrap {
+      margin-top: 1rem;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    .confidence-bar {
+      flex: 1;
+      height: 14px;
+      background: #F5E6F5;
+      border-radius: 10px;
+      overflow: hidden;
+    }
+    .confidence-fill {
+      height: 100%;
+      border-radius: 10px;
+      background: var(--active-color);
+      width: 0%;
+      transition: width 0.6s cubic-bezier(.4,0,.2,1), background 0.4s;
+      background-image: linear-gradient(90deg, rgba(255,255,255,0.35) 25%, transparent 25%, transparent 50%, rgba(255,255,255,0.35) 50%, rgba(255,255,255,0.35) 75%, transparent 75%);
+      background-size: 24px 24px;
+      animation: stripes 1s linear infinite;
+    }
+    @keyframes stripes { from { background-position: 0 0; } to { background-position: 24px 0; } }
+    .confidence-pct {
+      font-family: 'Nunito', sans-serif;
+      font-size: 14px;
+      font-weight: 800;
+      color: var(--text-dim);
+      min-width: 40px;
+      text-align: right;
+      transition: color 0.4s;
+    }
+    .confidence-pct.lit { color: var(--active-color); }
+
+    .stats-row {
+      display: flex;
+      gap: 10px;
+      margin-top: 1rem;
+      flex-wrap: wrap;
+    }
+    .stat-chip {
+      font-family: 'Nunito', sans-serif;
+      font-size: 12px;
+      font-weight: 700;
+      padding: 6px 12px;
+      border-radius: 50px;
+      border: 2px solid #F5E0F5;
+      background: #FDF5FF;
+      color: var(--text-dim);
+      display: flex;
+      gap: 6px;
+      align-items: center;
+    }
+    .stat-chip .val { color: var(--text); font-weight: 900; }
+
+    .faces-grid {
+      width: 100%;
+      max-width: 760px;
+      display: grid;
+      grid-template-columns: repeat(5, minmax(0,1fr));
+      gap: 12px;
+      position: relative; z-index: 1;
+    }
+
+    .face-card {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 10px;
+      padding: 18px 6px 14px;
+      border-radius: 18px;
+      border: 1.5px solid var(--border);
+      background: var(--surface);
+      transition: border-color 0.4s, background 0.4s, transform 0.3s, box-shadow 0.4s;
+      cursor: pointer;
+      position: relative;
+      overflow: hidden;
+    }
+    .face-card:hover { transform: translateY(-4px); }
+    .face-card:active { transform: translateY(-1px) scale(0.96); }
+
+    .face-card::after {
+      content: '';
+      position: absolute; inset: 0;
+      border-radius: 18px;
+      background: var(--card-glow, transparent);
+      opacity: 0;
+      transition: opacity 0.4s;
+      pointer-events: none;
+    }
+    .face-card.active::after { opacity: 0.06; }
+
+    .face-card.active {
+      transform: translateY(-6px) scale(1.03);
+    }
+
+    .face-card.e-felicidad.active  { border-color: var(--c-feliz);    box-shadow: 0 8px 30px -8px var(--c-feliz);    --card-glow: var(--c-feliz); }
+    .face-card.e-tristeza.active   { border-color: var(--c-triste);   box-shadow: 0 8px 30px -8px var(--c-triste);   --card-glow: var(--c-triste); }
+    .face-card.e-enojo.active      { border-color: var(--c-enojo);    box-shadow: 0 8px 30px -8px var(--c-enojo);    --card-glow: var(--c-enojo); }
+    .face-card.e-sorpresa.active   { border-color: var(--c-sorpresa); box-shadow: 0 8px 30px -8px var(--c-sorpresa); --card-glow: var(--c-sorpresa); }
+    .face-card.e-neutralidad.active{ border-color: var(--c-neutral);  box-shadow: 0 8px 30px -8px var(--c-neutral);  --card-glow: var(--c-neutral); }
+
+    .face-svg { width: 66px; height: 66px; }
+
+    .face-card .feat { stroke: #3A3D50; transition: stroke 0.4s; }
+    .face-card .face-bg { fill: #1A1C28; transition: fill 0.4s; }
+    .face-card.e-felicidad.active   .feat { stroke: var(--c-feliz); }
+    .face-card.e-felicidad.active   .face-bg { fill: #2A220A; }
+    .face-card.e-tristeza.active    .feat { stroke: var(--c-triste); }
+    .face-card.e-tristeza.active    .face-bg { fill: #0A1228; }
+    .face-card.e-enojo.active       .feat { stroke: var(--c-enojo); }
+    .face-card.e-enojo.active       .face-bg { fill: #280A0A; }
+    .face-card.e-sorpresa.active    .feat { stroke: var(--c-sorpresa); }
+    .face-card.e-sorpresa.active    .face-bg { fill: #281608; }
+    .face-card.e-neutralidad.active .feat { stroke: var(--c-neutral); }
+    .face-card.e-neutralidad.active .face-bg { fill: #0A2820; }
+
+    .face-name {
+      font-family: 'Baloo 2', cursive;
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      color: var(--text-dim);
+      transition: color 0.4s;
+    }
+    .face-card.e-felicidad.active   .face-name { color: var(--c-feliz); }
+    .face-card.e-tristeza.active    .face-name { color: var(--c-triste); }
+    .face-card.e-enojo.active       .face-name { color: var(--c-enojo); }
+    .face-card.e-sorpresa.active    .face-name { color: var(--c-sorpresa); }
+    .face-card.e-neutralidad.active .face-name { color: var(--c-neutral); }
+
+    .face-pill {
+      width: 20px; height: 3px;
+      border-radius: 2px;
+      background: var(--border);
+      transition: background 0.4s, width 0.4s;
+    }
+    .face-card.e-felicidad.active   .face-pill { background: var(--c-feliz);    width: 38px; }
+    .face-card.e-tristeza.active    .face-pill { background: var(--c-triste);   width: 38px; }
+    .face-card.e-enojo.active       .face-pill { background: var(--c-enojo);    width: 38px; }
+    .face-card.e-sorpresa.active    .face-pill { background: var(--c-sorpresa); width: 38px; }
+    .face-card.e-neutralidad.active .face-pill { background: var(--c-neutral);  width: 38px; }
+
+    .face-card.active .face-svg {
+      animation: pulse-ring 1.6s ease infinite;
+    }
+    @keyframes pulse-ring {
+      0%   { filter: drop-shadow(0 0 0px var(--active-color)); }
+      50%  { filter: drop-shadow(0 0 8px var(--active-color)); }
+      100% { filter: drop-shadow(0 0 0px var(--active-color)); }
+    }
+
+    .face-card.wobble { animation: wobble 0.5s ease; }
+    @keyframes wobble {
+      0%,100% { transform: rotate(0deg); }
+      25%      { transform: rotate(-8deg) scale(1.05); }
+      75%      { transform: rotate(8deg) scale(1.05); }
+    }
+
+    .sticker-check {
+      position: absolute;
+      top: 6px; right: 6px;
+      width: 20px; height: 20px;
+      border-radius: 50%;
+      background: #4DD9AC;
+      color: white;
+      font-size: 12px;
+      font-weight: 900;
+      display: none;
+      align-items: center;
+      justify-content: center;
+      box-shadow: 0 2px 6px rgba(0,0,0,0.15);
+      transform: scale(0);
+      transition: transform 0.3s cubic-bezier(.34,1.56,.64,1);
+      z-index: 3;
+    }
+    .face-card.collected .sticker-check { display: flex; transform: scale(1); }
+
+    /* ── POLAROID PHOTO (reemplaza el emoji al detectar la emoción) ── */
+    .photo-slot {
+      position: relative;
+      width: 66px;
+      height: 66px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .polaroid {
+      display: none;
+      position: absolute;
+      width: 78px;
+      background: #fff;
+      padding: 5px 5px 13px;
+      border-radius: 5px;
+      box-shadow: 0 8px 16px rgba(90,48,96,0.28);
+      transform: rotate(-4deg);
+      z-index: 2;
+    }
+    .face-card.has-photo .polaroid { display: block; }
+    .face-card.has-photo .face-svg { display: none; }
+    .polaroid.eject {
+      animation: polaroid-eject 0.7s cubic-bezier(.25,.85,.35,1.25);
+    }
+    @keyframes polaroid-eject {
+      0%   { transform: translateY(-55px) rotate(3deg) scale(0.35); opacity: 0; }
+      55%  { transform: translateY(6px) rotate(-7deg) scale(1.08); opacity: 1; }
+      100% { transform: translateY(0) rotate(-4deg) scale(1); opacity: 1; }
+    }
+    .polaroid-img {
+      width: 100%;
+      height: 48px;
+      object-fit: cover;
+      border-radius: 2px;
+      display: block;
+      background: #eee;
+    }
+    .polaroid-caption {
+      font-family: 'Baloo 2', cursive;
+      font-size: 7.5px;
+      font-weight: 700;
+      text-align: center;
+      color: #5A3060;
+      margin-top: 3px;
+      letter-spacing: 0.02em;
+      text-transform: uppercase;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .album-wrap {
+      width: 100%;
+      max-width: 760px;
+      margin-top: 1.6rem;
+      background: white;
+      border: 3px dashed var(--border);
+      border-radius: 24px;
+      padding: 1.2rem 1.4rem;
+      position: relative; z-index: 1;
+    }
+    .album-title {
+      font-family: 'Baloo 2', cursive;
+      font-weight: 800;
+      font-size: 16px;
+      color: var(--text);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 10px;
+    }
+    .album-count {
+      font-size: 13px;
+      background: #FDF5FF;
+      border: 2px solid var(--border);
+      color: var(--accent);
+      padding: 3px 12px;
+      border-radius: 50px;
+      font-weight: 900;
+    }
+    .album-track {
+      height: 12px;
+      background: #F5E6F5;
+      border-radius: 10px;
+      overflow: hidden;
+    }
+    .album-fill {
+      height: 100%;
+      width: 0%;
+      background: linear-gradient(90deg, #FFB800, #FF5757, #5B9CF6, #4DD9AC, #FF8C42);
+      border-radius: 10px;
+      transition: width 0.6s cubic-bezier(.4,0,.2,1);
+    }
+    .album-complete-msg {
+      margin-top: 10px;
+      font-family: 'Baloo 2', cursive;
+      font-weight: 700;
+      font-size: 14px;
+      color: var(--accent);
+      display: none;
+      text-align: center;
+    }
+    .album-complete-msg.show { display: block; animation: pop-in 0.5s ease; }
+    @keyframes pop-in {
+      0% { transform: scale(0.7); opacity: 0; }
+      100% { transform: scale(1); opacity: 1; }
+    }
+
+    .conn-bar {
+      width: 100%;
+      max-width: 760px;
+      margin-top: 1.5rem;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      position: relative; z-index: 1;
+      flex-wrap: wrap;
+      gap: 10px;
+    }
+    .conn-msg {
+      font-family: 'Nunito', sans-serif;
+      font-size: 12px;
+      font-weight: 700;
+      color: var(--text-dim);
+    }
+    .conn-msg.error { color: #EF4444; }
+    .conn-msg.ok    { color: #2AAA80; }
+    .ip-hint {
+      font-family: 'Nunito', sans-serif;
+      font-size: 12px;
+      color: var(--text-dim);
+      font-weight: 700;
+    }
+    .ip-hint input {
+      background: var(--surface);
+      border: 2px solid var(--border);
+      border-radius: 8px;
+      color: var(--text);
+      font-family: 'Nunito', sans-serif;
+      font-weight: 700;
+      font-size: 12px;
+      padding: 5px 9px;
+      width: 150px;
+      outline: none;
+      transition: border-color 0.3s;
+    }
+    .ip-hint input:focus { border-color: var(--accent); }
+
+    .scanline {
+      position: fixed;
+      top: 0; left: 0; right: 0;
+      height: 2px;
+      background: linear-gradient(90deg, transparent, var(--active-color), transparent);
+      opacity: 0;
+      pointer-events: none;
+      z-index: 100;
+      transition: background 0.4s;
+    }
+    .scanline.sweep {
+      animation: sweep 0.8s ease forwards;
+    }
+    @keyframes sweep {
+      0%   { opacity: 0.7; top: 0; }
+      100% { opacity: 0;   top: 100%; }
+    }
+
+    .confetti-piece {
+      position: fixed;
+      top: -20px;
+      font-size: 20px;
+      pointer-events: none;
+      z-index: 400;
+      animation: confetti-fall linear forwards;
+    }
+    @keyframes confetti-fall {
+      0%   { transform: translateY(0) rotate(0deg); opacity: 1; }
+      100% { transform: translateY(110vh) rotate(360deg); opacity: 0.2; }
+    }
+
+    /* ── JUEGO: DESAFÍO DE EMOCIONES ─────────────────── */
+    .game-overlay {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(90,48,96,0.55);
+      align-items: center;
+      justify-content: center;
+      z-index: 500;
+      padding: 1rem;
+    }
+    .game-overlay.show { display: flex; animation: fade-in 0.25s ease; }
+    @keyframes fade-in { from { opacity: 0; } to { opacity: 1; } }
+
+    .game-card {
+      background: white;
+      border-radius: 28px;
+      padding: 1.8rem 1.6rem;
+      max-width: 380px;
+      width: 100%;
+      text-align: center;
+      position: relative;
+      box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+      border: 3px solid var(--border);
+      animation: pop-in 0.35s ease;
+    }
+    .game-close {
+      position: absolute;
+      top: 12px; right: 14px;
+      width: 30px; height: 30px;
+      border-radius: 50%;
+      border: none;
+      background: #FDF0F7;
+      color: var(--text-dim);
+      font-weight: 800;
+      cursor: pointer;
+      font-size: 14px;
+    }
+    .game-close:hover { background: #FFE0EC; color: var(--accent); }
+    .game-score {
+      font-family: 'Baloo 2', cursive;
+      font-weight: 800;
+      font-size: 13px;
+      color: var(--accent);
+      background: #FDF5FF;
+      border: 2px solid var(--border);
+      border-radius: 50px;
+      display: inline-flex;
+      padding: 5px 14px;
+      margin-bottom: 1rem;
+    }
+    .game-title {
+      font-family: 'Baloo 2', cursive;
+      font-weight: 800;
+      font-size: 22px;
+      margin-bottom: 0.6rem;
+      color: var(--text);
+    }
+    .game-sub {
+      font-family: 'Nunito', sans-serif;
+      font-size: 14px;
+      color: var(--text-dim);
+      font-weight: 700;
+      margin-bottom: 1.4rem;
+      line-height: 1.4;
+    }
+    .game-start-btn {
+      font-family: 'Baloo 2', cursive;
+      font-weight: 800;
+      font-size: 16px;
+      padding: 12px 30px;
+      border-radius: 50px;
+      border: none;
+      color: white;
+      background: linear-gradient(135deg, #FF6FB0, var(--accent));
+      cursor: pointer;
+      box-shadow: 0 6px 18px rgba(224,64,160,0.35);
+      transition: transform 0.15s;
+    }
+    .game-start-btn:hover { transform: scale(1.05); }
+    .game-start-btn:active { transform: scale(0.94); }
+
+    .game-label {
+      font-family: 'Nunito', sans-serif;
+      font-size: 13px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--text-dim);
+      margin-bottom: 0.4rem;
+    }
+    .game-target-face {
+      width: 100px; height: 100px;
+      margin: 0 auto 0.6rem;
+    }
+    .game-target-face svg { width: 100%; height: 100%; }
+    .game-target-name {
+      font-family: 'Baloo 2', cursive;
+      font-weight: 800;
+      font-size: 24px;
+      color: var(--accent);
+      text-transform: capitalize;
+      margin-bottom: 1rem;
+    }
+    .game-countdown {
+      font-family: 'Baloo 2', cursive;
+      font-weight: 900;
+      font-size: 48px;
+      color: var(--text);
+      width: 84px; height: 84px;
+      line-height: 84px;
+      border-radius: 50%;
+      border: 5px solid var(--accent);
+      margin: 0 auto;
+    }
+    .game-countdown.tick { animation: countdown-tick 0.4s ease; }
+    @keyframes countdown-tick {
+      0%   { transform: scale(1.4); }
+      100% { transform: scale(1); }
+    }
+    .game-result-icon { font-size: 56px; margin-bottom: 0.5rem; }
+    .game-result-msg {
+      font-family: 'Baloo 2', cursive;
+      font-weight: 700;
+      font-size: 17px;
+      color: var(--text);
+      margin-bottom: 1.4rem;
+      line-height: 1.4;
+    }
+
+    @media (max-width: 560px) {
+      .faces-grid { grid-template-columns: repeat(3, minmax(0,1fr)); gap: 8px; }
+      .emotion-hero { flex-direction: column; text-align: center; }
+      .stats-row { flex-wrap: wrap; justify-content: center; }
+      .mascot-wrap { flex-direction: column; text-align: center; }
+      .speech-bubble::before, .speech-bubble::after { display: none; }
+    }
+    @media (max-width: 360px) {
+      .faces-grid { grid-template-columns: repeat(2, minmax(0,1fr)); }
+    }
+  </style>
+</head>
+<body>
+
+<div class="scanline" id="scanline"></div>
+
+<header>
+  <div class="logo"><span class="logo-emoji">🐣</span><span>Emotion</span>AI Kids</div>
+  <div class="header-right">
+    <div class="tpu-badge" id="tpuBadge">
+      <div class="tpu-dot" id="tpuDot"></div>
+      <span id="tpuText">TPU desconectado</span>
+    </div>
+    <button class="play-btn" id="playBtn">🎮 ¡Jugar!</button>
+    <button class="sound-btn" id="soundBtn" title="Sonido">🔊</button>
+  </div>
+</header>
+
+<div class="mascot-wrap">
+  <svg class="mascot" id="mascot" viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg">
+    <circle cx="32" cy="32" r="30" fill="#FFD84D" stroke="#FFB800" stroke-width="2"/>
+    <ellipse cx="21" cy="28" rx="4" ry="5" fill="#5A3060"/>
+    <ellipse cx="43" cy="28" rx="4" ry="5" fill="#5A3060"/>
+    <circle cx="22.5" cy="26" r="1.3" fill="white"/>
+    <circle cx="44.5" cy="26" r="1.3" fill="white"/>
+    <path d="M20 40 Q32 50 44 40" stroke="#5A3060" stroke-width="3" stroke-linecap="round" fill="none"/>
+    <ellipse cx="15" cy="36" rx="4.5" ry="3" fill="#FF8FB8" opacity="0.6"/>
+    <ellipse cx="49" cy="36" rx="4.5" ry="3" fill="#FF8FB8" opacity="0.6"/>
+  </svg>
+  <div class="speech-bubble" id="speechBubble">¡Hola! Poné tu cara frente a la cámara y vamos a descubrir cómo te sentís 🎉</div>
+</div>
+
+<div class="main-panel">
+  <div class="emotion-hero" id="emotionHero">
+    <div class="hero-face" id="heroFace"></div>
+    <div class="hero-info">
+      <div class="hero-label">emoción detectada</div>
+      <div class="hero-emotion" id="heroEmotion">—</div>
+      <div class="confidence-bar-wrap">
+        <div class="confidence-bar"><div class="confidence-fill" id="confFill"></div></div>
+        <div class="confidence-pct" id="confPct">—</div>
+      </div>
+      <div class="stats-row">
+        <div class="stat-chip">FPS <span class="val" id="fpsVal">—</span></div>
+        <div class="stat-chip">CORAL <span class="val" id="coralVal">—</span></div>
+        <div class="stat-chip">CONFIANZA <span class="val" id="confChip">—</span></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="faces-grid">
+
+  <div class="face-card e-felicidad" data-emotion="feliz" id="card-feliz">
+    <div class="sticker-check">✓</div>
+    <div class="photo-slot">
+      <div class="polaroid" id="polaroid-feliz">
+        <img class="polaroid-img" id="polaroid-img-feliz" alt="foto feliz"/>
+        <div class="polaroid-caption">felicidad</div>
+      </div>
+      <svg class="face-svg" viewBox="0 0 72 72" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <circle class="face-bg" cx="36" cy="36" r="32" fill="#1A1C28"/>
+        <circle cx="36" cy="36" r="32" stroke="#3A3D50" stroke-width="1.5" class="feat"/>
+        <ellipse cx="26" cy="30" rx="3" ry="3.5" fill="#3A3D50" class="feat" stroke="none"/>
+        <ellipse cx="46" cy="30" rx="3" ry="3.5" fill="#3A3D50" class="feat" stroke="none"/>
+        <circle cx="27.2" cy="28.5" r="1" fill="white" opacity="0.4"/>
+        <circle cx="47.2" cy="28.5" r="1" fill="white" opacity="0.4"/>
+        <path d="M24 42 Q36 54 48 42" stroke="#3A3D50" stroke-width="2.2" stroke-linecap="round" fill="none" class="feat"/>
+        <ellipse cx="21" cy="43" rx="5" ry="3" fill="#F0997B" opacity="0.15"/>
+        <ellipse cx="51" cy="43" rx="5" ry="3" fill="#F0997B" opacity="0.15"/>
+      </svg>
+    </div>
+    <span class="face-name">felicidad</span>
+    <div class="face-pill"></div>
+  </div>
+
+  <div class="face-card e-tristeza" data-emotion="triste" id="card-triste">
+    <div class="sticker-check">✓</div>
+    <div class="photo-slot">
+      <div class="polaroid" id="polaroid-triste">
+        <img class="polaroid-img" id="polaroid-img-triste" alt="foto triste"/>
+        <div class="polaroid-caption">tristeza</div>
+      </div>
+      <svg class="face-svg" viewBox="0 0 72 72" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <circle class="face-bg" cx="36" cy="36" r="32" fill="#1A1C28"/>
+        <circle cx="36" cy="36" r="32" stroke="#3A3D50" stroke-width="1.5" class="feat"/>
+        <path d="M22 25 Q26 22 30 24" stroke="#3A3D50" stroke-width="2" stroke-linecap="round" fill="none" class="feat"/>
+        <path d="M42 24 Q46 22 50 25" stroke="#3A3D50" stroke-width="2" stroke-linecap="round" fill="none" class="feat"/>
+        <ellipse cx="26" cy="32" rx="3" ry="3.5" fill="#3A3D50" class="feat" stroke="none"/>
+        <ellipse cx="46" cy="32" rx="3" ry="3.5" fill="#3A3D50" class="feat" stroke="none"/>
+        <circle cx="27.2" cy="30.5" r="1" fill="white" opacity="0.4"/>
+        <circle cx="47.2" cy="30.5" r="1" fill="white" opacity="0.4"/>
+        <path d="M26 36 Q24 41 26 43 Q28 41 26 36" fill="#3A3D50" class="feat" stroke="none"/>
+        <path d="M24 48 Q36 39 48 48" stroke="#3A3D50" stroke-width="2.2" stroke-linecap="round" fill="none" class="feat"/>
+      </svg>
+    </div>
+    <span class="face-name">tristeza</span>
+    <div class="face-pill"></div>
+  </div>
+
+  <div class="face-card e-enojo" data-emotion="enojado" id="card-enojado">
+    <div class="sticker-check">✓</div>
+    <div class="photo-slot">
+      <div class="polaroid" id="polaroid-enojado">
+        <img class="polaroid-img" id="polaroid-img-enojado" alt="foto enojo"/>
+        <div class="polaroid-caption">enojo</div>
+      </div>
+      <svg class="face-svg" viewBox="0 0 72 72" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <circle class="face-bg" cx="36" cy="36" r="32" fill="#1A1C28"/>
+        <circle cx="36" cy="36" r="32" stroke="#3A3D50" stroke-width="1.5" class="feat"/>
+        <path d="M21 24 L31 28" stroke="#3A3D50" stroke-width="2.5" stroke-linecap="round" fill="none" class="feat"/>
+        <path d="M41 28 L51 24" stroke="#3A3D50" stroke-width="2.5" stroke-linecap="round" fill="none" class="feat"/>
+        <path d="M22 33 Q26 29 30 33" stroke="#3A3D50" stroke-width="2" stroke-linecap="round" fill="none" class="feat"/>
+        <path d="M42 33 Q46 29 50 33" stroke="#3A3D50" stroke-width="2" stroke-linecap="round" fill="none" class="feat"/>
+        <path d="M26 47 Q36 41 46 47" stroke="#3A3D50" stroke-width="2.2" stroke-linecap="round" fill="none" class="feat"/>
+      </svg>
+    </div>
+    <span class="face-name">enojo</span>
+    <div class="face-pill"></div>
+  </div>
+
+  <div class="face-card e-sorpresa" data-emotion="sorprendido" id="card-sorprendido">
+    <div class="sticker-check">✓</div>
+    <div class="photo-slot">
+      <div class="polaroid" id="polaroid-sorprendido">
+        <img class="polaroid-img" id="polaroid-img-sorprendido" alt="foto sorpresa"/>
+        <div class="polaroid-caption">sorpresa</div>
+      </div>
+      <svg class="face-svg" viewBox="0 0 72 72" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <circle class="face-bg" cx="36" cy="36" r="32" fill="#1A1C28"/>
+        <circle cx="36" cy="36" r="32" stroke="#3A3D50" stroke-width="1.5" class="feat"/>
+        <path d="M22 22 Q26 18 30 21" stroke="#3A3D50" stroke-width="2" stroke-linecap="round" fill="none" class="feat"/>
+        <path d="M42 21 Q46 18 50 22" stroke="#3A3D50" stroke-width="2" stroke-linecap="round" fill="none" class="feat"/>
+        <circle cx="26" cy="30" r="4.5" stroke="#3A3D50" stroke-width="1.5" fill="none" class="feat"/>
+        <circle cx="46" cy="30" r="4.5" stroke="#3A3D50" stroke-width="1.5" fill="none" class="feat"/>
+        <circle cx="26" cy="30" r="2.2" fill="#3A3D50" class="feat" stroke="none"/>
+        <circle cx="46" cy="30" r="2.2" fill="#3A3D50" class="feat" stroke="none"/>
+        <circle cx="27" cy="28.8" r="0.9" fill="white" opacity="0.4"/>
+        <circle cx="47" cy="28.8" r="0.9" fill="white" opacity="0.4"/>
+        <ellipse cx="36" cy="47" rx="7" ry="8" stroke="#3A3D50" stroke-width="1.8" fill="none" class="feat"/>
+        <ellipse cx="36" cy="51" rx="4.5" ry="3" fill="#3A3D50" opacity="0.1" class="feat" stroke="none"/>
+      </svg>
+    </div>
+    <span class="face-name">sorpresa</span>
+    <div class="face-pill"></div>
+  </div>
+
+  <div class="face-card e-neutralidad" data-emotion="neutral" id="card-neutral">
+    <div class="sticker-check">✓</div>
+    <div class="photo-slot">
+      <div class="polaroid" id="polaroid-neutral">
+        <img class="polaroid-img" id="polaroid-img-neutral" alt="foto neutral"/>
+        <div class="polaroid-caption">neutralidad</div>
+      </div>
+      <svg class="face-svg" viewBox="0 0 72 72" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <circle class="face-bg" cx="36" cy="36" r="32" fill="#1A1C28"/>
+        <circle cx="36" cy="36" r="32" stroke="#3A3D50" stroke-width="1.5" class="feat"/>
+        <line x1="22" y1="26" x2="30" y2="26" stroke="#3A3D50" stroke-width="2" stroke-linecap="round" class="feat"/>
+        <line x1="42" y1="26" x2="50" y2="26" stroke="#3A3D50" stroke-width="2" stroke-linecap="round" class="feat"/>
+        <ellipse cx="26" cy="33" rx="3.2" ry="3" fill="#3A3D50" class="feat" stroke="none"/>
+        <ellipse cx="46" cy="33" rx="3.2" ry="3" fill="#3A3D50" class="feat" stroke="none"/>
+        <circle cx="27" cy="31.8" r="1" fill="white" opacity="0.4"/>
+        <circle cx="47" cy="31.8" r="1" fill="white" opacity="0.4"/>
+        <line x1="26" y1="46" x2="46" y2="46" stroke="#3A3D50" stroke-width="2.2" stroke-linecap="round" class="feat"/>
+      </svg>
+    </div>
+    <span class="face-name">neutralidad</span>
+    <div class="face-pill"></div>
+  </div>
+
+</div>
+
+<div class="album-wrap">
+  <div class="album-title">
+    <span>🌟 Mi colección de caritas</span>
+    <span class="album-count" id="albumCount">0 / 5</span>
+  </div>
+  <div class="album-track"><div class="album-fill" id="albumFill"></div></div>
+  <div class="album-complete-msg" id="albumCompleteMsg">🎉 ¡Completaste la colección! ¡Sos un campeón de las emociones! 🏆</div>
+</div>
+
+<div class="conn-bar">
+  <div class="conn-msg" id="connMsg">Buscando servidor…</div>
+  <div class="ip-hint">
+    IP Raspberry Pi:&nbsp;
+    <input type="text" id="ipInput" value="192.168.1.100" placeholder="192.168.1.100"/>
+  </div>
+</div>
+
+<!-- OVERLAY DEL JUEGO: DESAFÍO DE EMOCIONES -->
+<div class="game-overlay" id="gameOverlay">
+  <div class="game-card">
+    <button class="game-close" id="gameCloseBtn">✕</button>
+    <div class="game-score">🏅 Desafíos superados: <span id="gameScoreVal">0</span></div>
+
+    <div id="gameIntro">
+      <div class="game-title">¡Desafío de Emociones!</div>
+      <div class="game-sub">Te voy a mostrar una carita. ¡Tenés que hacerla vos frente a la cámara antes de que se acabe el tiempo!</div>
+      <button class="game-start-btn" id="gameStartBtn">¡Empezar!</button>
+    </div>
+
+    <div id="gamePlay" style="display:none;">
+      <div class="game-label">Hacé esta carita:</div>
+      <div class="game-target-face" id="gameTargetFace"></div>
+      <div class="game-target-name" id="gameTargetName">—</div>
+      <div class="game-countdown" id="gameCountdown">3</div>
+    </div>
+
+    <div id="gameResult" style="display:none;">
+      <div class="game-result-icon" id="gameResultIcon">🎉</div>
+      <div class="game-result-msg" id="gameResultMsg">¡Genial!</div>
+      <button class="game-start-btn" id="gameAgainBtn">Otro desafío</button>
+    </div>
+  </div>
+</div>
+
+<script>
+const POLL_MS     = 700;
+const ENDPOINT    = () => `http://${document.getElementById('ipInput').value.trim()}:5000/emotion`;
+
+const EMOTION_MAP = {
+  'feliz':        'feliz',
+  'felicidad':    'feliz',
+  'happy':        'feliz',
+  'triste':       'triste',
+  'tristeza':     'triste',
+  'sad':          'triste',
+  'enojado':      'enojado',
+  'enojo':        'enojado',
+  'angry':        'enojado',
+  'sorprendido':  'sorprendido',
+  'sorpresa':     'sorprendido',
+  'surprised':    'sorprendido',
+  'neutral':      'neutral',
+  'neutralidad':  'neutral',
+};
+
+const COLORS = {
+  feliz:        '#F59E0B',
+  triste:       '#3B82F6',
+  enojado:      '#EF4444',
+  sorprendido:  '#F97316',
+  neutral:      '#6EE7B7',
+};
+
+const MESSAGES = {
+  feliz:       ['¡Qué sonrisa tan grande! ¡Me contagiaste la alegría! 😄', '¡Feliz, feliz, feliz! ¡Bailemos! 🎶', '¡Tu sonrisa ilumina la pantalla! ✨'],
+  triste:      ['Uy, parece que estás un poco triste. ¡Un abrazo virtual para vos! 🤗', 'Está bien sentirse así a veces. ¡Ya vas a estar mejor! 💙', 'Che, ¿querés contarme qué pasó? Estoy para escucharte 🐣'],
+  enojado:     ['¡Uuuh, parece que algo te enojó! Respira hondo conmigo 🌬️', '¡Grrr! Vamos a calmarnos juntos, ¿dale? 💪', 'El enojo también es una emoción válida. ¡Ya va a pasar!'],
+  sorprendido: ['¡Wooow! ¿Qué fue eso?! ¡Qué sorpresa! 😲', '¡Ohhh! No me lo esperaba, ¡ni yo! ✨', '¡Cara de sorpresa activada! 🎉'],
+  neutral:     ['Todo tranqui por acá. ¡Cara relajada! 😌', 'Ni fu ni fa, todo en calma ⚖️', '¡Modo tranquilo activado!'],
+};
+
+const HERO_SVGS = {
+  feliz: `<svg viewBox="0 0 72 72" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <circle class="face-bg" cx="36" cy="36" r="32" fill="#2A220A"/>
+    <circle cx="36" cy="36" r="32" stroke="#F59E0B" stroke-width="1.5"/>
+    <ellipse cx="26" cy="30" rx="3" ry="3.5" fill="#F59E0B"/>
+    <ellipse cx="46" cy="30" rx="3" ry="3.5" fill="#F59E0B"/>
+    <circle cx="27.2" cy="28.5" r="1" fill="white" opacity="0.6"/>
+    <circle cx="47.2" cy="28.5" r="1" fill="white" opacity="0.6"/>
+    <path d="M24 42 Q36 54 48 42" stroke="#F59E0B" stroke-width="2.2" stroke-linecap="round" fill="none"/>
+    <ellipse cx="21" cy="43" rx="5" ry="3" fill="#F0997B" opacity="0.35"/>
+    <ellipse cx="51" cy="43" rx="5" ry="3" fill="#F0997B" opacity="0.35"/>
+  </svg>`,
+  triste: `<svg viewBox="0 0 72 72" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <circle cx="36" cy="36" r="32" fill="#0A1228"/>
+    <circle cx="36" cy="36" r="32" stroke="#3B82F6" stroke-width="1.5"/>
+    <path d="M22 25 Q26 22 30 24" stroke="#3B82F6" stroke-width="2" stroke-linecap="round" fill="none"/>
+    <path d="M42 24 Q46 22 50 25" stroke="#3B82F6" stroke-width="2" stroke-linecap="round" fill="none"/>
+    <ellipse cx="26" cy="32" rx="3" ry="3.5" fill="#3B82F6"/>
+    <ellipse cx="46" cy="32" rx="3" ry="3.5" fill="#3B82F6"/>
+    <circle cx="27.2" cy="30.5" r="1" fill="white" opacity="0.6"/>
+    <circle cx="47.2" cy="30.5" r="1" fill="white" opacity="0.6"/>
+    <path d="M26 36 Q24 41 26 43 Q28 41 26 36" fill="#3B82F6"/>
+    <path d="M24 48 Q36 39 48 48" stroke="#3B82F6" stroke-width="2.2" stroke-linecap="round" fill="none"/>
+  </svg>`,
+  enojado: `<svg viewBox="0 0 72 72" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <circle cx="36" cy="36" r="32" fill="#280A0A"/>
+    <circle cx="36" cy="36" r="32" stroke="#EF4444" stroke-width="1.5"/>
+    <path d="M21 24 L31 28" stroke="#EF4444" stroke-width="2.5" stroke-linecap="round"/>
+    <path d="M41 28 L51 24" stroke="#EF4444" stroke-width="2.5" stroke-linecap="round"/>
+    <path d="M22 33 Q26 29 30 33" stroke="#EF4444" stroke-width="2" stroke-linecap="round" fill="none"/>
+    <path d="M42 33 Q46 29 50 33" stroke="#EF4444" stroke-width="2" stroke-linecap="round" fill="none"/>
+    <path d="M26 47 Q36 41 46 47" stroke="#EF4444" stroke-width="2.2" stroke-linecap="round" fill="none"/>
+  </svg>`,
+  sorprendido: `<svg viewBox="0 0 72 72" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <circle cx="36" cy="36" r="32" fill="#281608"/>
+    <circle cx="36" cy="36" r="32" stroke="#F97316" stroke-width="1.5"/>
+    <path d="M22 22 Q26 18 30 21" stroke="#F97316" stroke-width="2" stroke-linecap="round" fill="none"/>
+    <path d="M42 21 Q46 18 50 22" stroke="#F97316" stroke-width="2" stroke-linecap="round" fill="none"/>
+    <circle cx="26" cy="30" r="4.5" stroke="#F97316" stroke-width="1.5" fill="none"/>
+    <circle cx="46" cy="30" r="4.5" stroke="#F97316" stroke-width="1.5" fill="none"/>
+    <circle cx="26" cy="30" r="2.2" fill="#F97316"/>
+    <circle cx="46" cy="30" r="2.2" fill="#F97316"/>
+    <circle cx="27" cy="28.8" r="0.9" fill="white" opacity="0.6"/>
+    <circle cx="47" cy="28.8" r="0.9" fill="white" opacity="0.6"/>
+    <ellipse cx="36" cy="47" rx="7" ry="8" stroke="#F97316" stroke-width="1.8" fill="none"/>
+  </svg>`,
+  neutral: `<svg viewBox="0 0 72 72" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <circle cx="36" cy="36" r="32" fill="#0A2820"/>
+    <circle cx="36" cy="36" r="32" stroke="#6EE7B7" stroke-width="1.5"/>
+    <line x1="22" y1="26" x2="30" y2="26" stroke="#6EE7B7" stroke-width="2" stroke-linecap="round"/>
+    <line x1="42" y1="26" x2="50" y2="26" stroke="#6EE7B7" stroke-width="2" stroke-linecap="round"/>
+    <ellipse cx="26" cy="33" rx="3.2" ry="3" fill="#6EE7B7"/>
+    <ellipse cx="46" cy="33" rx="3.2" ry="3" fill="#6EE7B7"/>
+    <circle cx="27" cy="31.8" r="1" fill="white" opacity="0.6"/>
+    <circle cx="47" cy="31.8" r="1" fill="white" opacity="0.6"/>
+    <line x1="26" y1="46" x2="46" y2="46" stroke="#6EE7B7" stroke-width="2.2" stroke-linecap="round"/>
+  </svg>`,
+};
+
+const NAMES = {
+  feliz: 'Felicidad', triste: 'Tristeza',
+  enojado: 'Enojo', sorprendido: 'Sorpresa', neutral: 'Neutralidad',
+};
+
+const CONFETTI_EMOJIS = ['🎉','⭐','🎊','✨','💖','🌈'];
+
+// ─── STATE ─────────────────────────────────────────────────────────────────
+let currentEmotion = null;
+let pollTimer      = null;
+let failCount      = 0;
+let soundOn        = true;
+let collected      = new Set();
+let audioCtx       = null;
+
+// cámara para las fotos polaroid
+let videoEl        = null;
+let camReady       = false;
+let lastServerFrame = null; // si Flask manda un frame en base64, se usa en vez de la webcam local
+
+// juego
+let gameTarget    = null;
+let gameChecking  = false;
+let gameCountdownTimer = null;
+let gameCountdownVal   = 3;
+let gameScore = Number(localStorage.getItem('emotionai_game_score') || 0);
+
+// ─── DOM REFS ──────────────────────────────────────────────────────────────
+const heroEl     = document.getElementById('emotionHero');
+const heroFaceEl = document.getElementById('heroFace');
+const heroEmEl   = document.getElementById('heroEmotion');
+const confFillEl = document.getElementById('confFill');
+const confPctEl  = document.getElementById('confPct');
+const fpsValEl   = document.getElementById('fpsVal');
+const coralValEl = document.getElementById('coralVal');
+const confChipEl = document.getElementById('confChip');
+const tpuBadge   = document.getElementById('tpuBadge');
+const tpuText    = document.getElementById('tpuText');
+const connMsgEl  = document.getElementById('connMsg');
+const scanlineEl = document.getElementById('scanline');
+const mascotEl   = document.getElementById('mascot');
+const speechEl   = document.getElementById('speechBubble');
+const soundBtn   = document.getElementById('soundBtn');
+const albumCountEl = document.getElementById('albumCount');
+const albumFillEl  = document.getElementById('albumFill');
+const albumCompleteEl = document.getElementById('albumCompleteMsg');
+
+const playBtn        = document.getElementById('playBtn');
+const gameOverlay     = document.getElementById('gameOverlay');
+const gameCloseBtn    = document.getElementById('gameCloseBtn');
+const gameStartBtn    = document.getElementById('gameStartBtn');
+const gameAgainBtn    = document.getElementById('gameAgainBtn');
+const gameIntroEl     = document.getElementById('gameIntro');
+const gamePlayEl      = document.getElementById('gamePlay');
+const gameResultEl    = document.getElementById('gameResult');
+const gameTargetFaceEl= document.getElementById('gameTargetFace');
+const gameTargetNameEl= document.getElementById('gameTargetName');
+const gameCountdownEl = document.getElementById('gameCountdown');
+const gameResultIconEl= document.getElementById('gameResultIcon');
+const gameResultMsgEl = document.getElementById('gameResultMsg');
+const gameScoreValEl  = document.getElementById('gameScoreVal');
+gameScoreValEl.textContent = gameScore;
+
+// ─── CÁMARA (para las fotos polaroid) ──────────────────────────────────────
+async function initCamera() {
+  try {
+    videoEl = document.createElement('video');
+    videoEl.autoplay = true;
+    videoEl.muted = true;
+    videoEl.playsInline = true;
+    videoEl.style.cssText = 'position:fixed;top:-9999px;left:-9999px;width:2px;height:2px;opacity:0;pointer-events:none;';
+    document.body.appendChild(videoEl);
+    const stream = await navigator.mediaDevices.getUserMedia({ video: { width: 240, height: 180 }, audio: false });
+    videoEl.srcObject = stream;
+    await videoEl.play();
+    camReady = true;
+  } catch (e) {
+    camReady = false; // sin permiso de cámara: seguimos usando las caritas dibujadas
+  }
+}
+initCamera();
+
+function capturePhotoDataUrl() {
+  // si el backend de Flask ya manda una foto (data.frame / data.image / data.snapshot), la usamos
+  if (lastServerFrame) return lastServerFrame;
+  if (!camReady || !videoEl || !videoEl.videoWidth) return null;
+  const canvas = document.createElement('canvas');
+  canvas.width = 160;
+  canvas.height = 120;
+  const ctx = canvas.getContext('2d');
+  ctx.drawImage(videoEl, 0, 0, canvas.width, canvas.height);
+  return canvas.toDataURL('image/jpeg', 0.75);
+}
+
+function showPolaroid(key) {
+  const dataUrl = capturePhotoDataUrl();
+  if (!dataUrl) return; // no hay foto disponible, se queda la carita dibujada
+  const card     = document.getElementById('card-' + key);
+  const polaroid = document.getElementById('polaroid-' + key);
+  const img      = document.getElementById('polaroid-img-' + key);
+  if (!card || !polaroid || !img) return;
+  img.src = dataUrl;
+  card.classList.add('has-photo');
+  polaroid.classList.remove('eject');
+  void polaroid.offsetWidth;
+  polaroid.classList.add('eject');
+}
+
+// ─── SONIDOS (Web Audio API, sin archivos externos) ────────────────────────
+function ensureAudio() {
+  if (!audioCtx) {
+    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  }
+  if (audioCtx.state === 'suspended') audioCtx.resume();
+  return audioCtx;
+}
+
+function playTone(freq, start, duration, type = 'sine', gainPeak = 0.18) {
+  if (!soundOn) return;
+  const ctx = ensureAudio();
+  const osc = ctx.createOscillator();
+  const gain = ctx.createGain();
+  osc.type = type;
+  osc.frequency.setValueAtTime(freq, ctx.currentTime + start);
+  gain.gain.setValueAtTime(0, ctx.currentTime + start);
+  gain.gain.linearRampToValueAtTime(gainPeak, ctx.currentTime + start + 0.02);
+  gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + start + duration);
+  osc.connect(gain);
+  gain.connect(ctx.destination);
+  osc.start(ctx.currentTime + start);
+  osc.stop(ctx.currentTime + start + duration + 0.05);
+}
+
+const SOUND_PATTERNS = {
+  feliz: () => {
+    [523.25, 659.25, 783.99, 1046.5].forEach((f, i) => playTone(f, i * 0.09, 0.22, 'triangle', 0.16));
+  },
+  triste: () => {
+    [440, 392, 349.23].forEach((f, i) => playTone(f, i * 0.16, 0.4, 'sine', 0.12));
+  },
+  enojado: () => {
+    [220, 233, 220].forEach((f, i) => playTone(f, i * 0.09, 0.15, 'sawtooth', 0.12));
+  },
+  sorprendido: () => {
+    playTone(600, 0, 0.09, 'square', 0.14);
+    playTone(1000, 0.09, 0.22, 'triangle', 0.18);
+  },
+  neutral: () => {
+    playTone(500, 0, 0.2, 'sine', 0.1);
+  },
+};
+
+function playClickSound() {
+  playTone(700, 0, 0.08, 'square', 0.1);
+}
+
+function playCollectSound() {
+  [660, 880, 1100].forEach((f, i) => playTone(f, i * 0.08, 0.25, 'triangle', 0.16));
+}
+
+function playAllCollectedFanfare() {
+  [523.25, 659.25, 783.99, 1046.5, 1318.5].forEach((f, i) => playTone(f, i * 0.11, 0.35, 'triangle', 0.18));
+}
+
+// ─── CONFETI ───────────────────────────────────────────────────────────────
+function launchConfetti(count = 18) {
+  for (let i = 0; i < count; i++) {
+    const piece = document.createElement('div');
+    piece.className = 'confetti-piece';
+    piece.textContent = CONFETTI_EMOJIS[Math.floor(Math.random() * CONFETTI_EMOJIS.length)];
+    piece.style.left = Math.random() * 100 + 'vw';
+    piece.style.animationDuration = (2 + Math.random() * 1.5) + 's';
+    piece.style.fontSize = (16 + Math.random() * 14) + 'px';
+    document.body.appendChild(piece);
+    setTimeout(() => piece.remove(), 3600);
+  }
+}
+
+// ─── MASCOTA ───────────────────────────────────────────────────────────────
+function mascotSay(key) {
+  const pool = MESSAGES[key];
+  if (!pool) return;
+  speechEl.textContent = pool[Math.floor(Math.random() * pool.length)];
+  mascotEl.classList.add('excited');
+  setTimeout(() => mascotEl.classList.remove('excited'), 900);
+}
+
+// ─── COLECCIÓN DE STICKERS ─────────────────────────────────────────────────
+function updateAlbum() {
+  albumCountEl.textContent = `${collected.size} / 5`;
+  albumFillEl.style.width = (collected.size / 5 * 100) + '%';
+  if (collected.size === 5) {
+    albumCompleteEl.classList.add('show');
+  }
+}
+
+function collectSticker(key) {
+  const card = document.getElementById('card-' + key);
+  const alreadyHad = collected.has(key);
+  collected.add(key);
+  if (card && !alreadyHad) {
+    card.classList.add('collected');
+    updateAlbum();
+    playCollectSound();
+    if (collected.size === 5) {
+      launchConfetti(35);
+      setTimeout(playAllCollectedFanfare, 250);
+    }
+  }
+}
+
+// ─── UPDATE UI ─────────────────────────────────────────────────────────────
+function activateEmotion(key, confidence, fps, tpu) {
+  const color = COLORS[key] || '#2A2D3E';
+
+  document.querySelectorAll('.face-card').forEach(c => c.classList.remove('active'));
+  const card = document.getElementById('card-' + key);
+  if (card) card.classList.add('active');
+
+  heroEl.classList.add('active');
+  heroFaceEl.innerHTML = HERO_SVGS[key] || '';
+  heroFaceEl.classList.remove('pop');
+  void heroFaceEl.offsetWidth;
+  heroFaceEl.classList.add('pop');
+  heroEmEl.textContent = NAMES[key] || key;
+  heroEmEl.classList.add('colored');
+
+  document.documentElement.style.setProperty('--active-color', color);
+  document.documentElement.style.setProperty('--active-glow', color);
+
+  const pct = Math.round(confidence * (confidence <= 1 ? 100 : 1));
+  confFillEl.style.width = pct + '%';
+  confPctEl.textContent  = pct + '%';
+  confPctEl.classList.add('lit');
+
+  fpsValEl.textContent   = fps !== undefined ? fps : '—';
+  coralValEl.textContent = tpu || '—';
+  confChipEl.textContent = pct + '%';
+
+  const tpuOk = tpu && tpu.toLowerCase().includes('conectado') || tpu === 'active';
+  tpuBadge.classList.toggle('connected', tpuOk);
+  tpuText.textContent = tpuOk ? 'TPU activo' : (tpu || 'TPU —');
+
+  // solo festejamos cuando CAMBIA la emoción (para no repetir sonido en cada poll)
+  if (key !== currentEmotion) {
+    triggerScanline();
+    if (SOUND_PATTERNS[key]) SOUND_PATTERNS[key]();
+    mascotSay(key);
+    if (key === 'feliz') launchConfetti(14);
+    collectSticker(key);
+    showPolaroid(key);
+    currentEmotion = key;
+  }
+
+  // si el juego está esperando esta carita, se revisa en cada detección (aunque no haya cambiado)
+  if (gameChecking && key === gameTarget) {
+    challengeResult(true);
+  }
+}
+
+function clearEmotion() {
+  document.querySelectorAll('.face-card').forEach(c => c.classList.remove('active'));
+  heroEl.classList.remove('active');
+  heroFaceEl.innerHTML = '';
+  heroEmEl.textContent = '—';
+  heroEmEl.classList.remove('colored');
+  confFillEl.style.width = '0%';
+  confPctEl.textContent  = '—';
+  confPctEl.classList.remove('lit');
+  fpsValEl.textContent   = '—';
+  coralValEl.textContent = '—';
+  confChipEl.textContent = '—';
+  document.documentElement.style.setProperty('--active-color', '#2A2D3E');
+  document.documentElement.style.setProperty('--active-glow', 'transparent');
+  tpuBadge.classList.remove('connected');
+  tpuText.textContent = 'TPU desconectado';
+  currentEmotion = null;
+}
+
+function triggerScanline() {
+  scanlineEl.classList.remove('sweep');
+  void scanlineEl.offsetWidth;
+  scanlineEl.classList.add('sweep');
+}
+
+// ─── JUEGO: DESAFÍO DE EMOCIONES ───────────────────────────────────────────
+function openGame() {
+  ensureAudio();
+  playClickSound();
+  gameOverlay.classList.add('show');
+  showGameIntro();
+}
+function closeGame() {
+  gameOverlay.classList.remove('show');
+  clearInterval(gameCountdownTimer);
+  gameChecking = false;
+}
+function showGameIntro() {
+  gameIntroEl.style.display  = 'block';
+  gamePlayEl.style.display   = 'none';
+  gameResultEl.style.display = 'none';
+}
+function startChallenge() {
+  const keys = Object.keys(NAMES);
+  gameTarget = keys[Math.floor(Math.random() * keys.length)];
+
+  gameIntroEl.style.display  = 'none';
+  gameResultEl.style.display = 'none';
+  gamePlayEl.style.display   = 'block';
+
+  gameTargetFaceEl.innerHTML = HERO_SVGS[gameTarget] || '';
+  gameTargetNameEl.textContent = NAMES[gameTarget];
+
+  gameCountdownVal = 3;
+  gameCountdownEl.textContent = gameCountdownVal;
+  gameChecking = true;
+
+  ensureAudio();
+  playTone(880, 0, 0.15, 'square', 0.12);
+
+  clearInterval(gameCountdownTimer);
+  gameCountdownTimer = setInterval(() => {
+    gameCountdownVal--;
+    if (gameCountdownVal <= 0) {
+      clearInterval(gameCountdownTimer);
+      if (gameChecking) challengeResult(false);
+    } else {
+      gameCountdownEl.textContent = gameCountdownVal;
+      gameCountdownEl.classList.remove('tick');
+      void gameCountdownEl.offsetWidth;
+      gameCountdownEl.classList.add('tick');
+      playTone(660, 0, 0.1, 'square', 0.1);
+    }
+  }, 1000);
+}
+function challengeResult(success) {
+  gameChecking = false;
+  clearInterval(gameCountdownTimer);
+  gamePlayEl.style.display   = 'none';
+  gameResultEl.style.display = 'block';
+
+  if (success) {
+    gameScore++;
+    localStorage.setItem('emotionai_game_score', gameScore);
+    gameScoreValEl.textContent = gameScore;
+    gameResultIconEl.textContent = '🎉';
+    gameResultMsgEl.textContent  = '¡Genial! ¡Hiciste la carita perfecta!';
+    showPolaroid(gameTarget);
+    launchConfetti(24);
+    playCollectSound();
+  } else {
+    gameResultIconEl.textContent = '💪';
+    gameResultMsgEl.textContent  = '¡Casi! Probemos de nuevo, vos podés.';
+    playTone(300, 0, 0.3, 'sawtooth', 0.1);
+  }
+}
+
+playBtn.addEventListener('click', openGame);
+gameCloseBtn.addEventListener('click', closeGame);
+gameStartBtn.addEventListener('click', startChallenge);
+gameAgainBtn.addEventListener('click', startChallenge);
+gameOverlay.addEventListener('click', (e) => { if (e.target === gameOverlay) closeGame(); });
+
+// ─── FETCH LOOP ────────────────────────────────────────────────────────────
+async function fetchEmotion() {
+  try {
+    const res  = await fetch(ENDPOINT(), { signal: AbortSignal.timeout(1500) });
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const data = await res.json();
+
+    // si el backend manda una foto de la cámara del Raspberry Pi, la usamos para el polaroid
+    const rawFrame = data.frame ?? data.image ?? data.snapshot ?? null;
+    lastServerFrame = rawFrame ? (rawFrame.startsWith('data:') ? rawFrame : `data:image/jpeg;base64,${rawFrame}`) : null;
+
+    const rawEmotion = (data.emotion || '').toLowerCase().trim();
+    const key        = EMOTION_MAP[rawEmotion];
+
+    failCount = 0;
+    connMsgEl.textContent = '● Recibiendo datos en tiempo real';
+    connMsgEl.className   = 'conn-msg ok';
+
+    if (key) {
+      activateEmotion(key, data.confidence ?? data.confianza ?? 0, data.fps, data.tpu ?? data.coral);
+    } else {
+      clearEmotion();
+      connMsgEl.textContent = '● Sin rostro detectado';
+      connMsgEl.className   = 'conn-msg';
+    }
+  } catch (e) {
+    failCount++;
+    clearEmotion();
+    if (failCount === 1) {
+      connMsgEl.textContent = '● Intentando conectar con la Raspberry Pi…';
+      connMsgEl.className   = 'conn-msg';
+    } else {
+      connMsgEl.textContent = '✕ Sin conexión — revisá la IP y que Flask esté corriendo';
+      connMsgEl.className   = 'conn-msg error';
+    }
+  } finally {
+    pollTimer = setTimeout(fetchEmotion, POLL_MS);
+  }
+}
+
+// ─── INTERACCIONES DIVERTIDAS ───────────────────────────────────────────────
+document.querySelectorAll('.face-card').forEach(card => {
+  card.addEventListener('click', () => {
+    const key = card.dataset.emotion;
+    ensureAudio();
+    playClickSound();
+    card.classList.remove('wobble');
+    void card.offsetWidth;
+    card.classList.add('wobble');
+    setTimeout(() => { if (SOUND_PATTERNS[key]) SOUND_PATTERNS[key](); }, 120);
+    mascotSay(key);
+    collectSticker(key);
+    if (key === 'feliz') launchConfetti(10);
+  });
+});
+
+mascotEl.addEventListener('click', () => {
+  ensureAudio();
+  playClickSound();
+  const greetings = [
+    '¡Hola de nuevo! ¿Cómo te sentís hoy? 🐣',
+    '¡Toc toc! Soy tu amigo detector de emociones 💛',
+    '¡Seguí explorando! Tocá las caritas para escucharlas 🎵',
+  ];
+  speechEl.textContent = greetings[Math.floor(Math.random() * greetings.length)];
+  mascotEl.classList.add('excited');
+  setTimeout(() => mascotEl.classList.remove('excited'), 900);
+});
+
+soundBtn.addEventListener('click', () => {
+  soundOn = !soundOn;
+  soundBtn.textContent = soundOn ? '🔊' : '🔇';
+  soundBtn.classList.toggle('muted', !soundOn);
+  if (soundOn) { ensureAudio(); playClickSound(); }
+});
+
+document.getElementById('ipInput').addEventListener('change', () => {
+  clearTimeout(pollTimer);
+  failCount = 0;
+  connMsgEl.textContent = 'Buscando servidor…';
+  connMsgEl.className   = 'conn-msg';
+  fetchEmotion();
+});
+
+// ─── INIT ──────────────────────────────────────────────────────────────────
+fetchEmotion();
+</script>
+
+<img src="{{ url_for('video_feed') }}" alt="Transmision en vivo">
+
+</body>
+</html>
