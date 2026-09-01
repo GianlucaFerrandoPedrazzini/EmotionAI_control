@@ -14,7 +14,7 @@ app = Flask(__name__)
 MODEL_TPU_PATH = "models/emociones_edgetpu.tflite"
 MODEL_CPU_PATH = "models/emociones.tflite"
 LIBEDGETPU_PATH = "/usr/lib/aarch64-linux-gnu/libedgetpu.so.1.0"
-CLASSES = ['Enojo', 'Disgusto', 'Miedo', 'Feliz', 'Triste', 'Sorpresa', 'Neutral']
+CLASSES = ['Feliz', 'Enojo', 'Sorpresa', 'Neutral', 'Triste']
 
 latest_emotion = "Cargando..."
 current_frame = None
@@ -52,8 +52,8 @@ def camera_loop():
     global latest_emotion, current_frame, interpreter, is_tpu
     
     # Inicializar el detector facial
-    #face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
     face_cascade = cv2.CascadeClassifier('/usr/share/opencv4/haarcascades/haarcascade_frontalface_default.xml')
+    
     # Inicializar la cámara usando la API de Bookworm
     picam2 = Picamera2()
     config = picam2.create_preview_configuration(main={"size": (640, 480), "format": "RGB888"})
@@ -67,8 +67,15 @@ def camera_loop():
 
         input_details = interpreter.get_input_details()
         output_details = interpreter.get_output_details()
+        
+        # --- CORRECCIÓN DE SHAPE ADAPTATIVA PARA CORAL ---
         input_shape = input_details[0]['shape']
-        height, width, channels = input_shape[1], input_shape[2], input_shape[3]
+        
+        # Ajustar dinámicamente si el modelo pide 224x224 o si es un vector plano de landmarks
+        if len(input_shape) == 4:
+            height, width = input_shape[1], input_shape[2]
+        else:
+            height, width = 224, 224  # Estándar por defecto para MobileNetV3-Small
 
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
         faces = face_cascade.detectMultiScale(gray, scaleFactor=1.3, minNeighbors=5)
@@ -76,18 +83,20 @@ def camera_loop():
         for (x, y, w, h) in faces:
             roi = frame[y:y+h, x:x+w]
             
-            if channels == 1:
-                roi_prep = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
-            else:
-                roi_prep = cv2.cvtColor(roi, cv2.COLOR_BGR2RGB)
-                
+            # Forzar conversión estricta a RGB a color
+            roi_prep = cv2.cvtColor(roi, cv2.COLOR_BGR2RGB)
             roi_prep = cv2.resize(roi_prep, (width, height))
+            
+            # Preparar lote base
             input_data = np.expand_dims(roi_prep, axis=0)
 
+            # --- PREPROCESAMIENTO DIRECTO SIN PÉRDIDA DE PRECISIÓN ---
             if input_details[0]['dtype'] == np.uint8:
                 input_data = input_data.astype(np.uint8)
             elif input_details[0]['dtype'] == np.int8:
-                input_data = (input_data - 128).astype(np.int8)
+                # Normalización estándar para MobileNetV3 en Edge TPU (-1 a 1 mapeado a INT8)
+                normalized = (roi_prep.astype(np.float32) / 127.5) - 1.0
+                input_data = np.expand_dims(normalized, axis=0).astype(np.int8)
             else:
                 input_data = (input_data / 255.0).astype(np.float32)
 
@@ -98,6 +107,7 @@ def camera_loop():
                 output_data = interpreter.get_tensor(output_details[0]['index'])
                 inference_time = (time.time() - start_time) * 1000
 
+                # Extraer predicción de forma segura
                 prediction_idx = np.argmax(output_data[0])
                 latest_emotion = CLASSES[prediction_idx]
 
@@ -107,8 +117,9 @@ def camera_loop():
                             (x, y - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
 
             except Exception as e:
+                print(f"\n[ALERTA TFLITE]: Error en inferencia: {e}")
                 if is_tpu:
-                    print(f"\n[ALERTA] Fallo TPU ({e}). Conmutando a CPU...")
+                    print("Conmutando a CPU por error de tensores...")
                     interpreter, is_tpu = create_interpreter(use_tpu=False)
 
         # Codificar fotograma para la transmisión HTTP
